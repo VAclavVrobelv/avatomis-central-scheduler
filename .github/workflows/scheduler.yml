@@ -1,0 +1,32 @@
+name: Authenticated deployment scheduler
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: authenticated-central-scheduler
+  cancel-in-progress: false
+jobs:
+  service:
+    if: github.repository == 'VAclavVrobelv/avatomis-central-scheduler' && github.ref == 'refs/heads/main' && github.event.repository.private == false && vars.SCHEDULER_ENABLED != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Run and verify existing authorized deployment work
+        id: worker
+        env:
+          CENTRAL_SCHEDULER_KEY: ${{ secrets.CENTRAL_SCHEDULER_KEY }}
+          SCHEDULER_RUN_SECONDS: '480'
+        run: python3 -u scheduler.py
+      - name: Hand off without waiting for scheduled event delivery
+        if: ${{ always() && !cancelled() && steps.worker.outputs.renew == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SCHEDULER_RENEW_DELAY: ${{ steps.worker.outcome == 'failure' && '180' || '15' }}
+        run: python3 -u scheduler.py --renew
