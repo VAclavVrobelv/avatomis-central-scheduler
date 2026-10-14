@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   service:
-    if: github.repository == 'VAclavVrobelv/avatomis-central-scheduler' && github.ref == 'refs/heads/main' && github.event.repository.private == false && vars.SCHEDULER_ENABLED != '0'
+    if: github.repository == 'VAclavVrobelv/avatomis-central-scheduler' && github.ref == 'refs/heads/main' && github.event.repository.private == false && (vars.SCHEDULER_ENABLED == '' || vars.SCHEDULER_ENABLED == '1')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
