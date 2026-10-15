@@ -42,79 +42,22 @@ def wake(key,lane):
     # No server response or signature is copied into public logs.
     return True
 
-def output(name,value):
-    path=os.environ.get('GITHUB_OUTPUT')
-    if path:
-        with open(path,'a',encoding='utf-8') as handle:handle.write(name+'='+value+'\n')
-
-def service(seconds=480):
+def once():
+    """One bounded batch per scheduled event: no polling, sleeps or self-dispatch."""
     context()
-    if type(seconds) is not int or not 60<=seconds<=1200:raise ValueError('Unsafe worker lifetime')
     key=os.environ.get('CENTRAL_SCHEDULER_KEY','')
     if not re.fullmatch(r'[a-f0-9]{64}',key):raise CredentialRejected('Scoped worker key missing')
-    output('renew','true');deadline=time.monotonic()+seconds;confirmed=0;failed=0;cycles=0;last=None
-    while time.monotonic()<deadline:
-        start=time.monotonic();cycles+=1
+    results={}
+    for lane in ('work','maintenance'):
         try:
-            wake(key,'work');confirmed+=1;failed=0;last=time.monotonic();result='completed'
-        except CredentialRejected:
-            output('renew','false');raise
-        except Busy:result='busy'
-        except Exception:failed+=1;result='not-confirmed'
-        print(json.dumps({'cycle':cycles,'result':result}),flush=True)
-        delay=min(max(0,PERIOD-(time.monotonic()-start)),max(0,deadline-time.monotonic()))
-        if delay:time.sleep(delay)
-    maintenance='not-confirmed'
-    try:
-        wake(key,'maintenance');maintenance='completed'
-    except CredentialRejected:
-        output('renew','false');raise
-    except Busy:maintenance='busy'
-    except Exception:pass
-    healthy=confirmed>0 and failed==0 and last is not None and time.monotonic()-last<=240 and maintenance!='not-confirmed'
-    print(json.dumps({'confirmed_cycles':confirmed,'maintenance':maintenance,'healthy':healthy}),flush=True)
-    summary=os.environ.get('GITHUB_STEP_SUMMARY')
-    if summary:
-        with open(summary,'a',encoding='utf-8') as handle:
-            handle.write('### Authenticated scheduler\n\nConfirmed operations: '+str(confirmed)
-                         +'\n\nFinal verification: '+('passed' if healthy else 'not confirmed')
-                         +'\n\nNo customer content, URLs, API responses or credentials are included.\n')
-    if not healthy:raise RuntimeError('Worker did not finish with fresh confirmation')
+            wake(key,lane);results[lane]='completed'
+        except Busy:results[lane]='busy'
+    print(json.dumps({'scheduler':results,'mode':'economy'}),flush=True)
     return True
-
-def github(token,path,payload=None):
-    if path not in ('','/actions/workflows/'+WORKFLOW,'/actions/workflows/'+WORKFLOW+'/dispatches'):
-        raise ValueError('Unsupported GitHub resource')
-    request=urllib.request.Request('https://api.github.com/repos/'+REPOSITORY+path,
-        data=json.dumps(payload).encode() if payload is not None else None,
-        headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','Content-Type':'application/json',
-                 'User-Agent':'Avatomis-Scheduler','X-GitHub-Api-Version':'2022-11-28'})
-    try:
-        with urllib.request.build_opener(NoRedirect).open(request,timeout=20) as response:
-            raw=response.read(32769)
-            if len(raw)>32768:raise RuntimeError('GitHub response outside safe bounds')
-            return response.status,json.loads(raw) if raw else None
-    except Exception:raise RuntimeError('Scheduler handoff not confirmed') from None
-
-def renew(delay=15):
-    context();token=os.environ.get('GITHUB_TOKEN','')
-    if not token or '\n' in token or '\r' in token:raise RuntimeError('Job-scoped authorization missing')
-    if type(delay) is not int or not 0<=delay<=180:raise ValueError('Unsafe cooldown')
-    code,repo=github(token,'')
-    if code!=200 or repo.get('full_name')!=REPOSITORY or repo.get('private') is not False:
-        raise RuntimeError('Continuous worker requires the original public repository')
-    code,workflow=github(token,'/actions/workflows/'+WORKFLOW)
-    if code!=200 or workflow.get('path')!='.github/workflows/'+WORKFLOW:raise RuntimeError('Unexpected workflow')
-    if workflow.get('state')!='active':print('{"successor":"disabled"}');return False
-    if delay:time.sleep(delay)
-    code,_=github(token,'/actions/workflows/'+WORKFLOW+'/dispatches',{'ref':'main'})
-    if code!=204:raise RuntimeError('Successor not confirmed')
-    print('{"successor":"accepted"}');return True
 
 if __name__=='__main__':
     try:
-        if sys.argv[1:]==['--renew']:renew(int(os.environ.get('SCHEDULER_RENEW_DELAY','15')))
-        elif not sys.argv[1:]:service(int(os.environ.get('SCHEDULER_RUN_SECONDS','480')))
-        else:raise ValueError('Unsupported command')
+        if sys.argv[1:]:raise ValueError('Unsupported command')
+        once()
     except Exception:
         print('Scheduler operation was not fully confirmed; no private response was logged.',file=sys.stderr);sys.exit(1)

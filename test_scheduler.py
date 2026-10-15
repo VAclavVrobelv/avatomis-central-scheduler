@@ -30,9 +30,15 @@ class Tests(unittest.TestCase):
   for code,kind in [(403,s.CredentialRejected),(401,s.CredentialRejected),(429,s.Busy),(500,RuntimeError)]:
    with patch('scheduler.urllib.request.OpenerDirector.open',side_effect=urllib.error.HTTPError(s.ENDPOINT,code,'',{},None)):
     with self.assertRaises(kind):s.wake(KEY,'work')
- def test_private_repository_cannot_renew(self):
-  with patch.dict(os.environ,{'GITHUB_REPOSITORY':s.REPOSITORY,'GITHUB_REF':'refs/heads/main','GITHUB_TOKEN':'synthetic'}),patch('scheduler.github',return_value=(200,{'full_name':s.REPOSITORY,'private':True})):
-   with self.assertRaises(RuntimeError):s.renew(0)
- def test_successor(self):
-  with patch.dict(os.environ,{'GITHUB_REPOSITORY':s.REPOSITORY,'GITHUB_REF':'refs/heads/main','GITHUB_TOKEN':'synthetic'}),patch('scheduler.github',side_effect=[(200,{'full_name':s.REPOSITORY,'private':False}),(200,{'path':'.github/workflows/scheduler.yml','state':'active'}),(204,None)]):self.assertTrue(s.renew(0))
+ def test_single_batch_no_sleep_or_successor(self):
+  with patch.dict(os.environ,{'GITHUB_REPOSITORY':s.REPOSITORY,'GITHUB_REF':'refs/heads/main','CENTRAL_SCHEDULER_KEY':KEY}),patch('scheduler.wake',return_value=True)as wake,patch('scheduler.time.sleep')as sleep:
+   self.assertTrue(s.once());self.assertEqual([c.args for c in wake.call_args_list],[(KEY,'work'),(KEY,'maintenance')])
+   sleep.assert_not_called();self.assertFalse(hasattr(s,'renew'))
+ def test_uncertain_result_not_retried(self):
+  with patch.dict(os.environ,{'GITHUB_REPOSITORY':s.REPOSITORY,'GITHUB_REF':'refs/heads/main','CENTRAL_SCHEDULER_KEY':KEY}),patch('scheduler.wake',side_effect=RuntimeError('uncertain'))as wake:
+   with self.assertRaises(RuntimeError):s.once()
+   self.assertEqual(wake.call_count,1)
+ def test_busy_preserves_queue(self):
+  with patch.dict(os.environ,{'GITHUB_REPOSITORY':s.REPOSITORY,'GITHUB_REF':'refs/heads/main','CENTRAL_SCHEDULER_KEY':KEY}),patch('scheduler.wake',side_effect=[s.Busy(),True])as wake:
+   self.assertTrue(s.once());self.assertEqual(wake.call_count,2)
 if __name__=='__main__':unittest.main()
