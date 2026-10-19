@@ -2,7 +2,7 @@ name: Authenticated deployment scheduler
 on:
   workflow_dispatch:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '7,22,37,52 * * * *'
 permissions:
   contents: read
 concurrency:
@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - name: Verify privacy and signed receipts
+        run: python3 -m unittest -v test_scheduler.py
       - name: Run and verify existing authorized deployment work
         id: worker
         env:
